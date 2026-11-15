@@ -1,0 +1,5 @@
+/build/
+/build-*/
+/.arduino15/
+/.arduino-user/
+__pycache__/
