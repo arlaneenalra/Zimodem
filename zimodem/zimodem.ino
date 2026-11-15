@@ -15,6 +15,15 @@
 */
 //#define TCP_SND_BUF                     4 * TCP_MSS
 #define ZIMODEM_VERSION "4.0.3"
+// The version reported by ATI4/the banner and compared by AT&U. scripts/build.sh
+// passes -DZIMODEM_BUILD_ID=<digits> (digits so that AT&U=<version> parses).
+#define ZSTR2(x) #x
+#define ZSTR(x) ZSTR2(x)
+#ifdef ZIMODEM_BUILD_ID
+# define ZIMODEM_FIRMWARE_VERSION ZIMODEM_VERSION "-" ZSTR(ZIMODEM_BUILD_ID)
+#else
+# define ZIMODEM_FIRMWARE_VERSION ZIMODEM_VERSION
+#endif
 const char compile_date[] = __DATE__ " " __TIME__;
 #define DEFAULT_NO_DELAY true
 #define null 0
@@ -33,6 +42,7 @@ const char compile_date[] = __DATE__ " " __TIME__;
 #define INCLUDE_PPP true
 //#define SUPPORT_LED_PINS true // enable if you have the spare gpio pins and leds
 //#define INCLUDE_CMDRX16 true // enable this if you are David or Kevin
+#define INCLUDE_FRANKLESS true // ESP8266 on the Frankless's J8 (dvi-feather-terminal): 115200, RTS/CTS
 //#define USE_DEVUPDATER true // only enable this if your name is Bo
 
 // Figure out whether we are building for ESP8266 or ESP32
@@ -170,9 +180,37 @@ const char compile_date[] = __DATE__ " " __TIME__;
 # define DEFAULT_PIN_DCD 2
 # define DEFAULT_PIN_OTH -1 // pulse pin
 # define DEFAULT_FCT FCT_DISABLED
+# if INCLUDE_FRANKLESS               /* ESP-12F on the Frankless's J8 header (dvi-feather-terminal) */
+#  undef DEFAULT_FCT
+#  define DEFAULT_FCT FCT_RTSCTS     // terminal RTS GP23 -> GPIO5 (CTS), GPIO4 (RTS) -> terminal CTS GP22
+#  undef DEFAULT_BAUD_RATE
+#  define DEFAULT_BAUD_RATE 115200   // the terminal's default
+# endif
 # define debugPrintf doNothing //Serial.printf
 # define preEOLN(...)
 # define echoEOLN(...) serial.prints(EOLN)
+#endif
+
+#if INCLUDE_OTH_UPDATES
+/* AT&U update site: a base URL (set with AT&U"url", saved with AT&W) holding
+ * UPDATE_FILE_STEM-latest-version.txt and UPDATE_FILE_STEM-firmware-<version>.bin
+ * (scripts/update-site.sh writes them). */
+# if USE_DEVUPDATER
+#  define DEFAULT_UPDATE_URL "http://192.168.1.10:8080/otherprojs"
+# elif INCLUDE_FRANKLESS && defined(ZIMODEM_ESP8266)
+#  define DEFAULT_UPDATE_URL "http://claude-box.seg9.com:8000"
+# else
+#  define DEFAULT_UPDATE_URL "http://www.zimmers.net/otherprojs"
+# endif
+# if INCLUDE_CMDRX16
+#  define UPDATE_FILE_STEM "x16"
+# elif INCLUDE_FRANKLESS && defined(ZIMODEM_ESP8266)
+#  define UPDATE_FILE_STEM "frankless"
+# elif defined(ZIMODEM_ESP32)
+#  define UPDATE_FILE_STEM "guru2"
+# else
+#  define UPDATE_FILE_STEM "c64net2"
+# endif
 #endif
 
 # define DEFAULT_DCD_ACTIVE  LOW
@@ -248,6 +286,9 @@ static bool pinSupport[MAX_PIN_NO];
 static int pinCache[MAX_PIN_NO];
 static String termType = DEFAULT_TERMTYPE;
 static String busyMsg = DEFAULT_BUSYMSG;
+#if INCLUDE_OTH_UPDATES
+static String updateUrl = DEFAULT_UPDATE_URL;
+#endif
 static bool debugUart = false;
 
 static OpModes altOpMode = OPMODE_NONE;

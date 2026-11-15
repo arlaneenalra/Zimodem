@@ -78,12 +78,13 @@ enum ConfigOptions
   CFG_S62_TELNET=38,
   CFG_S63_HANGUP=39,
   CFG_ALTOPMODE=40,
-  CFG_LAST=40
+  CFG_UPDATEURL=41, // AT&U update site; last, so older config files still load
+  CFG_LAST=41
 };
 
 const ConfigOptions v2HexCfgs[] = {
   CFG_WIFISSI, CFG_WIFIPW, CFG_TIMEZONE, CFG_TIMEFMT, CFG_TIMEURL,
-  CFG_PRINTSPEC, CFG_BUSYMSG, CFG_HOSTNAME, CFG_TERMTYPE, (ConfigOptions)255
+  CFG_PRINTSPEC, CFG_BUSYMSG, CFG_HOSTNAME, CFG_TERMTYPE, CFG_UPDATEURL, (ConfigOptions)255
 };
 
 enum BinType

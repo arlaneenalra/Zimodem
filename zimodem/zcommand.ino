@@ -215,6 +215,9 @@ void ZCommand::setConfigDefaults()
   machineState = stateMachine;
   termType = DEFAULT_TERMTYPE;
   busyMsg = DEFAULT_BUSYMSG;
+#if INCLUDE_OTH_UPDATES
+  updateUrl = DEFAULT_UPDATE_URL;
+#endif
 #if SUPPORT_LED_PINS
   if(pinSupport[DEFAULT_PIN_AA])
   {
@@ -385,6 +388,11 @@ bool ZCommand::reSaveConfig(int retries)
   String printSpechex = TOHEX(printMode.getLastPrinterSpec(),hex,256);
   String termTypehex = TOHEX(termType.c_str(),hex,256);
   String busyMsghex = TOHEX(busyMsg.c_str(),hex,256);
+#if INCLUDE_OTH_UPDATES
+  String updateUrlhex = TOHEX(updateUrl.c_str(),hex,256);
+#else
+  String updateUrlhex = "";
+#endif
   String staticIPstr;
   ConnSettings::IPtoStr(staticIP,staticIPstr);
   String staticDNSstr;
@@ -404,7 +412,8 @@ bool ZCommand::reSaveConfig(int retries)
   f.printf("%s,%s,%s,",zclockFormathex.c_str(),zclockHosthex.c_str(),hostnamehex.c_str());
   f.printf("%d,%s,%s,",printMode.getTimeoutDelayMs(),printSpechex.c_str(),termTypehex.c_str());
   f.printf("%s,%s,%s,%s,",staticIPstr.c_str(),staticDNSstr.c_str(),staticGWstr.c_str(),staticSNstr.c_str());
-  f.printf("%s,%d,%d,%d",busyMsghex.c_str(),telnetSupport,streamMode.getHangupType(),altOpMode);
+  f.printf("%s,%d,%d,%d,",busyMsghex.c_str(),telnetSupport,streamMode.getHangupType(),altOpMode);
+  f.printf("%s",updateUrlhex.c_str());
   f.close();
   delay(500);
   if(SPIFFS.exists(CONFIG_FILE))
@@ -560,6 +569,10 @@ void ZCommand::setOptionsFromSavedConfig(String configArguments[])
     termType = configArguments[CFG_TERMTYPE];
   if(configArguments[CFG_BUSYMSG].length()>0)
     busyMsg = configArguments[CFG_BUSYMSG];
+#if INCLUDE_OTH_UPDATES
+  if(configArguments[CFG_UPDATEURL].length()>0)
+    updateUrl = configArguments[CFG_UPDATEURL];
+#endif
   if(configArguments[CFG_ALTOPMODE].length()>0)
   {
     altOpMode = (OpModes)atoi(configArguments[CFG_ALTOPMODE].c_str());
@@ -940,7 +953,7 @@ ZResult ZCommand::doInfoCommand(int vval, uint8_t *vbuf, int vlen, bool isNumber
   }
   case 4:
   {
-    serial.prints(ZIMODEM_VERSION);
+    serial.prints(ZIMODEM_FIRMWARE_VERSION);
     serial.prints(EOLN);
     break;
   }
@@ -1518,39 +1531,58 @@ ZResult ZCommand::doWebDump(const char *filename, const bool cache)
 #if INCLUDE_OTH_UPDATES
 ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNumber)
 {
+  // The update site: AT&U? shows it, AT&U"url" sets it, AT&U"" resets it to
+  // the default (AT&W saves it). A bare AT&U, AT&U6502 or AT&U=x use it.
+  if((!isNumber)&&((vlen==0)||(vbuf[0]!='=')))
+  {
+    if((vlen==1)&&(vbuf[0]=='?'))
+    {
+      serial.prints(updateUrl.c_str());
+      serial.prints(EOLN);
+      return ZOK;
+    }
+    String newUrl = (vlen==0) ? String(DEFAULT_UPDATE_URL) : String((char *)vbuf);
+    while(newUrl.endsWith("/"))
+      newUrl.remove(newUrl.length()-1);
+    char checkBuf[128];
+    char *checkHost, *checkPath;
+    int checkPort;
+    bool checkSSL;
+    if((newUrl.length() >= sizeof(checkBuf)) // TOHEX in reSaveConfig takes 127 chars
+    ||(newUrl.length() == 0))
+      return ZERROR;
+    strcpy(checkBuf,newUrl.c_str());
+    if((!parseWebUrl((uint8_t *)checkBuf,&checkHost,&checkPath,&checkPort,&checkSSL))
+    ||(strlen(checkHost)==0))
+      return ZERROR;
+    updateUrl = newUrl;
+    return ZOK;
+  }
+
   serial.prints("Local firmware version ");
-  serial.prints(ZIMODEM_VERSION);
+  serial.prints(ZIMODEM_FIRMWARE_VERSION);
   serial.prints(".");
   serial.prints(EOLN);
 
   uint8_t buf[255];
   int bufSize = 254;
-  char firmwareName[100];
-#if USE_DEVUPDATER
-  char *updaterHost = "192.168.1.10";
-  int updaterPort = 8080;
-#else
-# if INCLUDE_CMDRX16
-   char *updaterHost = "www.zimmers.net"; // changeme!
-# else
-   char *updaterHost = "www.zimmers.net";
-# endif
-  int updaterPort = 80;
-#endif
-#if INCLUDE_CMDRX16
-  char *updaterPrefix = "/otherprojs/x16";
-#else
-# ifdef ZIMODEM_ESP32
-   char *updaterPrefix = "/otherprojs/guru2";
-# else
-  char *updaterPrefix = "/otherprojs/c64net2";
-# endif
-#endif
-  sprintf(firmwareName,"%s-latest-version.txt",updaterPrefix);
-  if((!doWebGetBytes(updaterHost, updaterPort, firmwareName, false, buf, &bufSize))||(bufSize<=0))
+  char firmwareName[300];
+  // <url>/<stem>-latest-version.txt and <url>/<stem>-firmware-<version>.bin
+  char urlBuf[128];
+  strncpy(urlBuf,updateUrl.c_str(),sizeof(urlBuf)-1);
+  urlBuf[sizeof(urlBuf)-1]=0;
+  char *updaterHost;
+  char *updaterPath;
+  int updaterPort;
+  bool updaterSSL;
+  if(!parseWebUrl((uint8_t *)urlBuf,&updaterHost,&updaterPath,&updaterPort,&updaterSSL))
+    return ZERROR;
+  const char *updaterSep = (strlen(updaterPath)>0) ? "/" : "";
+  snprintf(firmwareName,sizeof(firmwareName),"/%s%s" UPDATE_FILE_STEM "-latest-version.txt",updaterPath,updaterSep);
+  if((!doWebGetBytes(updaterHost, updaterPort, firmwareName, updaterSSL, buf, &bufSize))||(bufSize<=0))
     return ZERROR;
 
-  if((!isNumber)&&(vlen>2))
+  if((!isNumber)&&(vlen>2)&&(vlen<(int)sizeof(buf)))
   {
     if(vbuf[0]=='=')
     {
@@ -1570,7 +1602,7 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
     buf[bufSize] = 0;
   }
   
-  if((strlen(ZIMODEM_VERSION)==bufSize) && memcmp(buf,ZIMODEM_VERSION,strlen(ZIMODEM_VERSION))==0)
+  if((strlen(ZIMODEM_FIRMWARE_VERSION)==bufSize) && memcmp(buf,ZIMODEM_FIRMWARE_VERSION,strlen(ZIMODEM_FIRMWARE_VERSION))==0)
   {
     serial.prints("Your modem is up-to-date.");
     serial.prints(EOLN);
@@ -1590,9 +1622,9 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
   
   serial.printf("Updating to %s, wait for modem restart...",buf);
   serial.flush();
-  sprintf(firmwareName,"%s-firmware-%s.bin", updaterPrefix, buf);
+  snprintf(firmwareName,sizeof(firmwareName),"/%s%s" UPDATE_FILE_STEM "-firmware-%s.bin",updaterPath,updaterSep,buf);
   uint32_t respLength=0;
-  WiFiClient *c = doWebGetStream(updaterHost, updaterPort, firmwareName, false, &respLength);
+  WiFiClient *c = doWebGetStream(updaterHost, updaterPort, firmwareName, updaterSSL, &respLength);
   if(c==null)
   {
     serial.prints(EOLN);
@@ -3588,7 +3620,7 @@ void ZCommand::showInitMessage()
 #endif
   serial.prints("Firmware v");
   HWSerial.setTimeout(60000);
-  serial.prints(ZIMODEM_VERSION);
+  serial.prints(ZIMODEM_FIRMWARE_VERSION);
   //serial.prints(" (");
   //serial.prints(compile_date);
   //serial.prints(")");
