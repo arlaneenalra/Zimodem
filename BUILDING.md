@@ -43,8 +43,13 @@ earlier images so you can roll back:
 
 ```sh
 scripts/update-site.sh
-python3 -m http.server 8000 -d build/update-site
+scripts/serve-update-site.py            # port 8000, build/update-site (-p, -d)
 ```
+
+Use `serve-update-site.py` rather than `python3 -m http.server`: that
+sends the headers and the body separately, and firmware before the fix
+(including stock Zimodem) checks the image's first byte before it has
+arrived, so the update fails with ERROR (a broken pipe on the server).
 
 On the modem (plain HTTP; the ESP8266 has too little RAM for HTTPS):
 

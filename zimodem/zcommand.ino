@@ -1640,9 +1640,20 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
 
   serial.prints(".");
   serial.flush();
+  // writeStream() checks the image's magic byte with peek() before reading,
+  // which fails at once if no body bytes have arrived yet (servers such as
+  // python's http.server send the headers and the body separately).
+  unsigned long bodyWait = millis();
+  while((c->available()==0) && c->connected() && (millis()-bodyWait < 10000))
+  {
+    delay(10);
+    yield();
+  }
   int writeBytes = Update.writeStream(*c);
   if(writeBytes != respLength)
   {
+    serial.printf("%sUpdate error %d after %d of %u bytes.",EOLN.c_str(),(int)Update.getError(),writeBytes,respLength);
+    Update.end(); // bytes remain: resets the updater, keeps the old image
     c->stop();
     delete c;
     serial.prints(EOLN);
@@ -1652,6 +1663,7 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
   serial.flush();
   if(!Update.end())
   {
+    serial.printf("%sUpdate error %d.",EOLN.c_str(),(int)Update.getError());
     c->stop();
     delete c;
     serial.prints(EOLN);
