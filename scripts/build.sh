@@ -13,6 +13,9 @@
 #   BUILD_ID    digits appended to the version, 4.0.3-<BUILD_ID>, which AT&U
 #               compares against the update site (default: UTC YYYYMMDDHHMMSS)
 #   ARDUINO_CLI arduino-cli binary          (default: .arduino15/bin/arduino-cli)
+#   FRANKLESS_HW_FLOW  0: the Frankless build's CTS/RTS on GPIO5/GPIO4 in
+#               software (the older J8 wiring), set by ATS49/ATS51; unset or
+#               1: fixed on GPIO13/GPIO15, the UART's own (see BUILDING.md)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,7 +50,7 @@ build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   --build-path "$BUILD_DIR/work" \
   --output-dir "$BUILD_DIR" \
   --warnings default \
-  --build-property "compiler.cpp.extra_flags=-DZIMODEM_BUILD_ID=$BUILD_ID" \
+  --build-property "compiler.cpp.extra_flags=-DZIMODEM_BUILD_ID=$BUILD_ID${FRANKLESS_HW_FLOW:+ -DFRANKLESS_HW_FLOW=$FRANKLESS_HW_FLOW}" \
   "$SKETCH" 2>&1 | tee "$BUILD_DIR/compile.log"
 
 # The AT&U file stem, from the firmware's "/%s%s<stem>-latest-version.txt".
@@ -63,6 +66,7 @@ core_version="$("${CLI[@]}" core list --json \
   echo "update_stem=$update_stem"
   echo "sketch=$SKETCH"
   echo "fqbn=$FQBN"
+  echo "frankless_hw_flow=${FRANKLESS_HW_FLOW:-default}"
   echo "esp8266_core=$core_version"
   echo "arduino_cli=$("$ARDUINO_CLI" version | head -1)"
   echo "git_sha=$git_sha"

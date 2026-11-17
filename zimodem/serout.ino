@@ -31,12 +31,104 @@ static void hwSerialFlush()
 #endif
 }
 
+/* ESP8266 hardware flow control. UART0's own CTS and RTS are only on
+ * GPIO13 (U0CTS) and GPIO15 (U0RTS), pin function 4, so it is used when the
+ * pins are set there (S49=13, S51=15) with RTS/CTS flow control; any other
+ * pins keep the software CTS (one byte into an empty FIFO at a time, so it
+ * can stop within a byte). With the hardware's CTS the TX FIFO may be
+ * filled: the UART itself stops within the byte when CTS goes inactive.
+ * HWSerial.begin() rewrites both UART config registers, so a baud or format
+ * change calls this again. */
+#ifdef ZIMODEM_ESP8266
+# define HW_FLOW_PIN_CTS 13
+# define HW_FLOW_PIN_RTS 15
+# define HW_FLOW_RX_THRESHOLD 100 // of the 128-byte RX FIFO; the core's ISR empties it at 16
+#endif
+
+static void serialHwFlowApply()
+{
+#ifdef ZIMODEM_ESP8266
+  bool rtscts = (hwFlowType == FCT_RTSCTS);
+  bool tx = rtscts && (pinCTS == HW_FLOW_PIN_CTS) && pinSupport[HW_FLOW_PIN_CTS];
+  bool rx = rtscts && (pinRTS == HW_FLOW_PIN_RTS) && pinSupport[HW_FLOW_PIN_RTS];
+  if(tx || rx)
+  {
+    // the pins are the UART's now
+    if(pinDSR == HW_FLOW_PIN_CTS || pinDSR == HW_FLOW_PIN_RTS)
+      pinDSR = 11; // never supported: no DSR
+    if(pinDTR == HW_FLOW_PIN_CTS || pinDTR == HW_FLOW_PIN_RTS)
+      pinDTR = 11;
+    if(pinRI == HW_FLOW_PIN_CTS || pinRI == HW_FLOW_PIN_RTS)
+      pinRI = 11;
+    if(pinDCD == HW_FLOW_PIN_CTS || pinDCD == HW_FLOW_PIN_RTS)
+      pinDCD = 11;
+  }
+  if(tx)
+  {
+    pinMode(HW_FLOW_PIN_CTS, FUNCTION_4);
+    // the core turns the pull-up on (for a swapped RX): undriven, as when
+    // the terminal's flow control is off, CTS must read active (low)
+    GPF(HW_FLOW_PIN_CTS) &= ~(1 << GPFPU);
+    if(ctsActive == HIGH)
+      USC0(0) |= (1 << UCCTSI);
+    else
+      USC0(0) &= ~(1 << UCCTSI);
+    USC0(0) |= (1 << UCTXHFE);
+  }
+  else
+  {
+    USC0(0) &= ~((1 << UCTXHFE) | (1 << UCCTSI));
+    if(hwFlowTx)
+      pinMode(HW_FLOW_PIN_CTS, INPUT); // a GPIO again (S49 moved it, or not RTS/CTS)
+  }
+  if(rx)
+  {
+    pinMode(HW_FLOW_PIN_RTS, FUNCTION_4);
+    if(rtsActive == HIGH)
+      USC0(0) |= (1 << UCRTSI);
+    else
+      USC0(0) &= ~(1 << UCRTSI);
+    USC1(0) = (USC1(0) & ~(0x7F << UCRXHFT)) | (HW_FLOW_RX_THRESHOLD << UCRXHFT) | (1 << UCRXHFE);
+  }
+  else
+  {
+    USC1(0) &= ~(1 << UCRXHFE);
+    USC0(0) &= ~(1 << UCRTSI);
+    if(hwFlowRx)
+    {
+      if(pinRTS == HW_FLOW_PIN_RTS) // still RTS, set by software
+      {
+        pinMode(HW_FLOW_PIN_RTS, OUTPUT);
+        s_pinWrite(pinRTS, rtsActive);
+      }
+      else
+        pinMode(HW_FLOW_PIN_RTS, INPUT);
+    }
+  }
+  hwFlowTx = tx;
+  hwFlowRx = rx;
+#endif
+}
+
 static void serialOutDeque()
 {
 #ifdef ZIMODEM_ESP32
   while((TBUFhead != TBUFtail)
   &&((SER_BUFSIZE - HWSerial.availableForWrite())<dequeSize))
 #else
+  if(hwFlowTx)
+  {
+    // the UART holds the FIFO while CTS is inactive: fill it
+    int room = HWSerial.availableForWrite();
+    while((TBUFhead != TBUFtail) && (room-- > 0))
+    {
+      serialDirectWrite(TBUF[TBUFhead]);
+      TBUFhead++;
+      if(TBUFhead >= SER_WRITE_BUFSIZE)
+        TBUFhead = 0;
+    }
+    return;
+  }
   if((TBUFhead != TBUFtail)
   &&(HWSerial.availableForWrite()>=SER_BUFSIZE)) // necessary for esp8266 flow control
 #endif
@@ -112,6 +204,8 @@ bool ZSerial::isPetsciiMode()
 void ZSerial::setFlowControlType(FlowControlType type)
 {
   flowControlType = type;
+  hwFlowType = type;
+  serialHwFlowApply();
 #ifdef ZIMODEM_ESP32
   if(flowControlType == FCT_RTSCTS)
   {
@@ -248,8 +342,9 @@ void ZSerial::enqueByte(uint8_t c)
 #ifdef ZIMODEM_ESP32
       if(isSerialOut())
 #else
-      if((HWSerial.availableForWrite() >= SER_BUFSIZE) // necessary for esp8266 flow control
-      &&(isSerialOut()))
+      if(hwFlowTx ? (HWSerial.availableForWrite() > 0) // the UART watches CTS
+      : ((HWSerial.availableForWrite() >= SER_BUFSIZE) // necessary for esp8266 flow control
+        &&(isSerialOut())))
 #endif
       {
         serialDirectWrite(c);

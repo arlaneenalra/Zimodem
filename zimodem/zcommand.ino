@@ -194,6 +194,7 @@ void ZCommand::setConfigDefaults()
   s_pinWrite(pinDCD,dcdStatus);
   s_pinWrite(pinDSR,dsrActive);
   s_pinWrite(pinRI,riInactive);
+  serial.setFlowControlType(serial.getFlowControlType()); // the pins above may be the UART's (ESP8266 13/15)
   suppressResponses=false;
   numericResponses=false;
   longResponses=true;
@@ -495,6 +496,12 @@ void ZCommand::setOptionsFromSavedConfig(String configArguments[])
     dcdStatus=dcdInactive;
   }
   s_pinWrite(pinDCD,dcdStatus);
+#ifdef FIXED_FLOW_PINS
+  // the build fixes CTS/RTS (Frankless, FRANKLESS_HW_FLOW): saved pins from
+  // an earlier build or wiring do not count
+  configArguments[CFG_CTSPIN] = "";
+  configArguments[CFG_RTSPIN] = "";
+#endif
   if(configArguments[CFG_CTSPIN].length()>0)
   {
     pinCTS = atoi(configArguments[CFG_CTSPIN].c_str());
@@ -531,6 +538,9 @@ void ZCommand::setOptionsFromSavedConfig(String configArguments[])
       pinMode(pinDSR,OUTPUT);
   }
   s_pinWrite(pinDSR,dsrActive);
+  // after every pin: on the ESP8266, CTS 13 / RTS 15 are the UART's own
+  // (serout.ino serialHwFlowApply), and the pinMode calls above took them
+  serial.setFlowControlType(serial.getFlowControlType());
   if(configArguments[CFG_S0_RINGS].length()>0)
     ringCounter = atoi(configArguments[CFG_S0_RINGS].c_str());
   if(configArguments[CFG_S41_STREAM].length()>0)
@@ -2344,6 +2354,11 @@ ZResult ZCommand::setStatusRegister(const int snum, const int sval, int *crc8, c
    result=ZOK;
    break;
  case 49:
+#ifdef FIXED_FLOW_PINS
+   if(sval != DEFAULT_PIN_CTS) // fixed by the build
+     result=ZERROR;
+   else
+#endif
    if((sval >= 0) && (sval <= MAX_PIN_NO) && pinSupport[sval])
    {
      pinCTS=sval;
@@ -2364,6 +2379,11 @@ ZResult ZCommand::setStatusRegister(const int snum, const int sval, int *crc8, c
    result=ZOK;
    break;
  case 51:
+#ifdef FIXED_FLOW_PINS
+   if(sval != DEFAULT_PIN_RTS) // fixed by the build
+     result=ZERROR;
+   else
+#endif
    if((sval >= 0) && (sval <= MAX_PIN_NO) && pinSupport[sval])
    {
      pinRTS=sval;

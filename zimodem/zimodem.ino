@@ -182,9 +182,28 @@ const char compile_date[] = __DATE__ " " __TIME__;
 # define DEFAULT_FCT FCT_DISABLED
 # if INCLUDE_FRANKLESS               /* ESP-12F on the Frankless's J8 header (dvi-feather-terminal) */
 #  undef DEFAULT_FCT
-#  define DEFAULT_FCT FCT_RTSCTS     // terminal RTS GP23 -> GPIO5 (CTS), GPIO4 (RTS) -> terminal CTS GP22
+#  define DEFAULT_FCT FCT_RTSCTS     // terminal RTS GP23 -> GPIO13 (U0CTS), GPIO15 (U0RTS) -> terminal CTS GP22
 #  undef DEFAULT_BAUD_RATE
 #  define DEFAULT_BAUD_RATE 115200   // the terminal's default
+   /* FRANKLESS_HW_FLOW (default 1; scripts/build.sh FRANKLESS_HW_FLOW=0 for
+    * the older wiring, CTS GPIO5 / RTS GPIO4 in software): CTS and RTS on
+    * the UART's own pins, GPIO13 (U0CTS) and GPIO15 (U0RTS), fixed: saved
+    * S49/S51 are ignored and ATS49/ATS51 take no other pin. The hardware
+    * stops sending within the byte when CTS goes inactive, so the TX FIFO
+    * is filled instead of written a byte at a time (serout.ino
+    * serialHwFlowApply). */
+#  ifndef FRANKLESS_HW_FLOW
+#   define FRANKLESS_HW_FLOW 1
+#  endif
+#  if FRANKLESS_HW_FLOW
+#   define FIXED_FLOW_PINS 1
+#   undef DEFAULT_PIN_CTS
+#   define DEFAULT_PIN_CTS 13
+#   undef DEFAULT_PIN_RTS
+#   define DEFAULT_PIN_RTS 15
+#   undef DEFAULT_PIN_DSR
+#   define DEFAULT_PIN_DSR 11        // the flash's, never supported: no DSR (it was on GPIO13)
+#  endif
 # endif
 # define debugPrintf doNothing //Serial.printf
 # define preEOLN(...)
@@ -232,6 +251,18 @@ const char compile_date[] = __DATE__ " " __TIME__;
 #define INTERNAL_FLOW_CONTROL_DIV 380
 #define DEFAULT_RECONNECT_DELAY 60000
 #define MAX_RECONNECT_DELAY 1800000
+#if INCLUDE_FRANKLESS && !defined(ZIMODEM_ESP32)
+  /* Frankless: rejoin the saved network every 30 s (counted from the end of
+   * the last attempt) instead of backing off to 30 minutes, and give each
+   * attempt 30 s, since an AP that is restarting, or its DHCP, can take
+   * longer than 10 s and a cut-off attempt never got anywhere. */
+# define FIXED_RECONNECT_DELAY 30000
+# undef DEFAULT_RECONNECT_DELAY
+# define DEFAULT_RECONNECT_DELAY FIXED_RECONNECT_DELAY
+# define WIFI_CONNECT_TRIES 60 // x 500 ms
+#else
+# define WIFI_CONNECT_TRIES 20
+#endif
 
 class ZMode
 {
@@ -424,7 +455,20 @@ static bool connectWifi(const char* ssid, const char* password, IPAddress *ip, I
   if(hostname.length() > 0)
     setHostName(hostname.c_str());
 #endif
+#if INCLUDE_FRANKLESS && !defined(ZIMODEM_ESP32)
+  // The SSID and password live in Zimodem's own config file (AT&W) and are
+  // passed to every WiFi.begin(); persistent mode only made the SDK rewrite
+  // its own copy in flash on each begin() and disconnect(), where a reset
+  // or brownout mid-write left a network it could no longer join.
+  WiFi.persistent(false);
+#endif
   WiFi.mode(WIFI_STA);
+#if INCLUDE_FRANKLESS && !defined(ZIMODEM_ESP32)
+  // The ESP8266 defaults to modem sleep: the radio dozes between the AP's
+  // beacons, and a missed packet waits out a TCP retransmission (1-3 s
+  // stalls in an interactive session). Mains powered: stay awake.
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+#endif
   if((ip != null)&&(gateWay != null)&&(dns != null)&&(subNet!=null))
   {
     if(!WiFi.config(*ip,*gateWay,*subNet,*dns))
@@ -438,7 +482,7 @@ static bool connectWifi(const char* ssid, const char* password, IPAddress *ip, I
     setHostName(hostname.c_str());
   bool amConnected = (WiFi.status() == WL_CONNECTED) && (strcmp(WiFi.localIP().toString().c_str(), "0.0.0.0")!=0);
   int WiFiCounter = 0;
-  while ((!amConnected) && (WiFiCounter < 20))
+  while ((!amConnected) && (WiFiCounter < WIFI_CONNECT_TRIES))
   {
     WiFiCounter++;
     if(!amConnected)
@@ -493,6 +537,7 @@ static void changeBaudRate(int baudRate)
   HWSerial.updateBaudRate(baudRate);
 #else
   HWSerial.begin(baudRate, serialConfig);  //Change baud rate
+  serialHwFlowApply(); // begin() cleared the UART's flow control bits
 #endif
 #if SUPPORT_LED_PINS
   s_pinWrite(DEFAULT_PIN_HS,(baudRate>=DEFAULT_HS_BAUD)?DEFAULT_HS_ACTIVE:DEFAULT_HS_INACTIVE);
@@ -512,6 +557,7 @@ static void changeSerialConfig(SerialConfig conf)
 # else
     HWSerial.begin(baudRate, conf);  //Change baud rate
 # endif
+  serialHwFlowApply(); // begin() cleared the UART's flow control bits
   debugPrintf("Config changed.\r\n");
 }
 
@@ -672,6 +718,19 @@ void setup()
 
 void checkReconnect()
 {
+#if INCLUDE_FRANKLESS && !defined(ZIMODEM_ESP32)
+  // Setting WIFI_NONE_SLEEP before WiFi.begin() (connectWifi) did not stick:
+  // after a (re)association the SDK can be back in modem sleep (ping 100-200
+  // ms, the session stalling). Check once a second while connected.
+  static unsigned long nextSleepCheck = 0;
+  if((long)(millis() - nextSleepCheck) >= 0)
+  {
+    nextSleepCheck = millis() + 1000;
+    if((WiFi.status() == WL_CONNECTED)
+    &&(WiFi.getSleepMode() != WIFI_NONE_SLEEP))
+      WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  }
+#endif
   if((WiFi.status() != WL_CONNECTED)
   &&(nextReconnectDelay>0)
   &&(lastConnectAttempt>0)
@@ -686,9 +745,14 @@ void checkReconnect()
         unsigned long oldReconnectDelay = nextReconnectDelay;
         if(!connectWifi(wifiSSI.c_str(),wifiPW.c_str(),staticIP,staticDNS,staticGW,staticSN))
           debugPrintf("Unable to reconnect to %s.\r\n",wifiSSI.c_str());
+#ifdef FIXED_RECONNECT_DELAY
+        (void)oldReconnectDelay;
+        nextReconnectDelay = FIXED_RECONNECT_DELAY;
+#else
         nextReconnectDelay = oldReconnectDelay * 2;
         if(nextReconnectDelay > MAX_RECONNECT_DELAY)
           nextReconnectDelay = DEFAULT_RECONNECT_DELAY;
+#endif
      }
   }
 }

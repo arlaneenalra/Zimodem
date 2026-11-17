@@ -66,7 +66,47 @@ image is not signed: anyone who can type AT commands can install any image.
 
 ## Frankless / dvi-feather-terminal wiring
 
-Header J8 (UART1, 3.3 V): TX GP20 -> ESP RXD (GPIO3), RX GP21 <- ESP TXD
-(GPIO1), RTS GP23 -> ESP GPIO5 (Zimodem CTS), CTS GP22 <- ESP GPIO4
-(Zimodem RTS), 3V3 and GND. DTR/DSR/DCD/RI stay unconnected (leave S63=0).
-Add 100-470 uF at the module for the transmit current peaks.
+Header J8 (UART1, 3.3 V; pins 1-6: 3V3, GND, RTS, CTS, RX, TX):
+
+| J8 | ESP-12F |
+|---|---|
+| 1 3V3 | VCC (and EN, through its pull-up) |
+| 2 GND | GND |
+| 3 RTS (GP23, out) | GPIO13 (U0CTS) |
+| 4 CTS (GP22, in) | GPIO15 (U0RTS); 10 kOhm to GND, the boot strap |
+| 5 RX (GP21, in) | TXD (GPIO1) |
+| 6 TX (GP20, out) | RXD (GPIO3) |
+
+DTR/DSR/DCD/RI stay unconnected (leave S63=0). Add 100-470 uF at the
+module for the transmit current peaks.
+
+GPIO13 and GPIO15 are the UART's own CTS and RTS, so with RTS/CTS flow
+control the UART stops sending within a byte by itself and Zimodem fills
+its 128-byte TX FIFO instead of writing a byte at a time
+(serout.ino serialHwFlowApply). The Frankless build fixes them there
+(FRANKLESS_HW_FLOW, default 1): saved S49/S51 values are ignored, ATS49 and
+ATS51 refuse other pins, and DSR (GPIO13 in stock Zimodem) is off. GPIO15
+must be low when the module resets or it does not boot from flash:
+carrier boards have the pull-down, a bare module needs it added.
+
+The earlier wiring (RTS GP23 -> GPIO5, CTS GP22 <- GPIO4, read and
+driven in software) needs a build with `FRANKLESS_HW_FLOW=0
+scripts/build.sh` (or `update-site.sh`); its pins are S49/S51 as in stock
+Zimodem.
+
+WiFi in the Frankless build (stock Zimodem is unchanged):
+
+- Modem sleep off (`WIFI_NONE_SLEEP`): with it, an interactive session
+  froze for 2-3 s at a time (missed packets, TCP retransmissions). Set
+  before `WiFi.begin()` it did not always stick (after a rejoin the ping
+  was 100-200 ms again), so `checkReconnect()` also puts it back once a
+  second while connected. Under a full-speed stream pings still read
+  100-200 ms: that is the 115200 serial line's queue, not sleep.
+- `WiFi.persistent(false)`: the SSID and password are Zimodem's own (ATW,
+  saved by AT&W) and passed to every `WiFi.begin()`; the SDK no longer
+  rewrites its copy in flash on each connect and disconnect, where a reset
+  mid-write left a network the modem could not rejoin without a new ATW.
+- Each join attempt gets 30 s (stock 10 s), and a lost network is retried
+  every 30 s after the last attempt ended (stock: 60 s doubling to 30
+  minutes). An attempt blocks the modem while it runs, so AT commands
+  typed meanwhile wait.
