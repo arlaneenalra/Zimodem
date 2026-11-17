@@ -177,12 +177,27 @@ bool handleAsciiIAC(char *c, Stream *stream)
     {
       char what=streamAvailRead(stream);
       logSocketIn(what);
-      char lastC=*c;
-      while(((lastC!=TELNET_IAC)||(*c!=TELNET_SE))&&(*c>=0))
+      // Skip to IAC SE. In ints: char is unsigned on the ESP8266, so the old
+      // (*c>=0) test never saw the end of the data, and streamAvailRead's
+      // uint8_t turned a timeout or hang-up (-1) into 0xFF, an IAC: a
+      // sub-negotiation cut short looped here for good, deaf to +++.
+      int lastC=TELNET_SB;
+      int cc=TELNET_SB;
+      int sbLen=0;
+      while(!((lastC==TELNET_IAC)&&(cc==TELNET_SE)))
       {
-        lastC=*c;
-        *c=streamAvailRead(stream);
-        logSocketIn(*c);
+        if(++sbLen > 1024) // a runaway, not a sub-negotiation
+          break;
+        lastC=cc;
+        int ct=0;
+        while((stream->available()==0)&&(ct++<250))
+          delay(1);
+        cc=stream->read();
+        if(cc < 0) // the data ended (timeout or hang-up)
+          break;
+        logSocketIn((uint8_t)cc);
+        if((lastC==TELNET_IAC)&&(cc==TELNET_IAC))
+          cc=0; // IAC IAC: a data 0xFF, not the start of IAC SE
       }
       if(what == TELNET_TERMTYPE)
       {
