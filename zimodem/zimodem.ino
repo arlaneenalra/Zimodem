@@ -357,6 +357,14 @@ enum BaudState
 };
 
 static String wifiSSI;
+#if INCLUDE_FRANKLESS && !defined(ZIMODEM_ESP32)
+/* What this boot found, for ATI12 (with the reset reason): whether SPIFFS
+ * mounted or had to be formatted, and which config file was read and how
+ * long it was. Lost WiFi settings after a crash show here. */
+static bool bootSpiffsFormatted = false;
+static const char *bootConfigFile = "none";
+static int bootConfigLen = -1;
+#endif
 static String wifiPW;
 static String hostname;
 static IPAddress *staticIP = null;
@@ -692,8 +700,17 @@ void setup()
   debugPrintf("Zimodem %s firmware starting initialization\r\n",ZIMODEM_VERSION);
   initSDShell();
   currMode = &commandMode;
+#if INCLUDE_FRANKLESS && !defined(ZIMODEM_ESP32)
+  // Before anything here touches WiFi: loadConfig's disconnect() runs
+  // before connectWifi(), and in the default persistent mode it would
+  // rewrite the SDK's flash copy of the network.
+  WiFi.persistent(false);
+#endif
   if(!SPIFFS.begin())
   {
+#if INCLUDE_FRANKLESS && !defined(ZIMODEM_ESP32)
+    bootSpiffsFormatted = true;
+#endif
     SPIFFS.format();
     SPIFFS.begin();
     debugPrintf("SPIFFS Formatted.\r\n");

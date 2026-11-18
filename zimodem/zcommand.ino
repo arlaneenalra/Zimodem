@@ -602,6 +602,10 @@ void ZCommand::parseConfigOptions(String configArguments[])
     f = SPIFFS.open(CONFIG_FILE_OLD, "r");
   String str=f.readString();
   f.close();
+#if INCLUDE_FRANKLESS && !defined(ZIMODEM_ESP32)
+  bootConfigFile = v2 ? CONFIG_FILE : (SPIFFS.exists(CONFIG_FILE_OLD) ? CONFIG_FILE_OLD : "none");
+  bootConfigLen = str.length();
+#endif
   if((str!=null)&&(str.length()>0))
   {
     debugPrintf("Read Config: %s\r\n",str.c_str());
@@ -1015,6 +1019,20 @@ ZResult ZCommand::doInfoCommand(int vval, uint8_t *vbuf, int vlen, bool isNumber
     serial.printf("%d%s",ESP.getFreeHeap(),EOLN.c_str());
     break;
   }
+#if INCLUDE_FRANKLESS && !defined(ZIMODEM_ESP32)
+  case 12:
+  {
+    // Why the modem last restarted (exception number and addresses: decode
+    // epc1 with addr2line against the same build's .elf) and what this boot
+    // found in SPIFFS.
+    serial.printf("%s%s",ESP.getResetReason().c_str(),EOLN.c_str());
+    serial.printf("%s%s",ESP.getResetInfo().c_str(),EOLN.c_str());
+    serial.printf("SPIFFS %s, config %s, %d bytes%s",
+      bootSpiffsFormatted ? "formatted" : "mounted",
+      bootConfigFile, bootConfigLen, EOLN.c_str());
+    break;
+  }
+#endif
   default:
     return ZERROR;
   }

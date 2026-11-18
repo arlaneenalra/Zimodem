@@ -118,8 +118,12 @@ static void serialOutDeque()
 #else
   if(hwFlowTx)
   {
-    // the UART holds the FIFO while CTS is inactive: fill it
-    int room = HWSerial.availableForWrite();
+    // the UART holds the FIFO while CTS is inactive: fill it, but to 127
+    // bytes only. availableForWrite() is 128 less the FIFO's count, while
+    // write() takes 127 as full and spins on it without yielding: the 128th
+    // byte, with CTS held, ended in a soft WDT reset (epc1 in
+    // uart_tx_fifo_available, user's ATI12, bd xir.13).
+    int room = HWSerial.availableForWrite() - 1;
     while((TBUFhead != TBUFtail) && (room-- > 0))
     {
       serialDirectWrite(TBUF[TBUFhead]);
@@ -342,7 +346,7 @@ void ZSerial::enqueByte(uint8_t c)
 #ifdef ZIMODEM_ESP32
       if(isSerialOut())
 #else
-      if(hwFlowTx ? (HWSerial.availableForWrite() > 0) // the UART watches CTS
+      if(hwFlowTx ? (HWSerial.availableForWrite() > 1) // the UART watches CTS; 127 is full (serialOutDeque)
       : ((HWSerial.availableForWrite() >= SER_BUFSIZE) // necessary for esp8266 flow control
         &&(isSerialOut())))
 #endif

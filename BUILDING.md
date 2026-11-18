@@ -61,6 +61,13 @@ On the modem (plain HTTP; the ESP8266 has too little RAM for HTTPS):
 | `AT&U6502` | install `<site>/frankless-firmware-<latest>.bin` and restart |
 | `AT&U=4.0.3-<id>` | install that version (roll back) |
 
+`ATI12` (Frankless build) shows why the modem last restarted: the reset
+reason, the exception and its addresses (decode `epc1` with
+`xtensa-lx106-elf-addr2line -pfiaC -e build/zimodem.ino.elf` from the same
+build), and whether boot mounted SPIFFS or formatted it and which config
+file it read, and its length. Ask straight after the restart: a power
+cycle replaces it.
+
 The update replaces only the program; saved settings (SPIFFS) stay. The
 image is not signed: anyone who can type AT commands can install any image.
 
@@ -83,7 +90,11 @@ module for the transmit current peaks.
 GPIO13 and GPIO15 are the UART's own CTS and RTS, so with RTS/CTS flow
 control the UART stops sending within a byte by itself and Zimodem fills
 its 128-byte TX FIFO instead of writing a byte at a time
-(serout.ino serialHwFlowApply). The Frankless build fixes them there
+(serout.ino serialHwFlowApply). It fills it to 127 bytes only: the core's
+`availableForWrite()` is 128 less the FIFO's count, but `write()` takes 127
+as full and spins without yielding, so a 128th byte while CTS was held
+(the terminal's SET-UP open for a few seconds) ended in a soft watchdog
+reset. The Frankless build fixes them there
 (FRANKLESS_HW_FLOW, default 1): saved S49/S51 values are ignored, ATS49 and
 ATS51 refuse other pins, and DSR (GPIO13 in stock Zimodem) is off. GPIO15
 must be low when the module resets or it does not boot from flash:
@@ -102,8 +113,10 @@ WiFi in the Frankless build (stock Zimodem is unchanged):
   was 100-200 ms again), so `checkReconnect()` also puts it back once a
   second while connected. Under a full-speed stream pings still read
   100-200 ms: that is the 115200 serial line's queue, not sleep.
-- `WiFi.persistent(false)`: the SSID and password are Zimodem's own (ATW,
-  saved by AT&W) and passed to every `WiFi.begin()`; the SDK no longer
+- `WiFi.persistent(false)`, from the start of `setup()` (boot's
+  `loadConfig()` disconnects before the first `connectWifi()`): the SSID
+  and password are Zimodem's own (ATW or AT+CONFIG, saved in
+  `/zconfig_v2.txt`) and passed to every `WiFi.begin()`; the SDK no longer
   rewrites its copy in flash on each connect and disconnect, where a reset
   mid-write left a network the modem could not rejoin without a new ATW.
 - Each join attempt gets 30 s (stock 10 s), and a lost network is retried
