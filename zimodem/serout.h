@@ -42,7 +42,12 @@ static int TBUFtail=0;
 static int serialDelayMs = 0;
 static char FBUF[256];
 
+static FlowControlType hwFlowType = FCT_INVALID; // the last setFlowControlType, for serialHwFlowApply
+static bool hwFlowTx = false; // the UART stops sending on CTS by itself (ESP8266, CTS on GPIO13)
+static bool hwFlowRx = false; // the UART drives RTS from its RX FIFO (ESP8266, RTS on GPIO15)
+
 static void serialDirectWrite(uint8_t c);
+static void serialHwFlowApply();
 static void serialOutDeque();
 static int serialOutBufferBytesRemaining();
 static void clearSerialOutBuffer();

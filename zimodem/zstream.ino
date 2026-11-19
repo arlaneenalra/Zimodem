@@ -340,6 +340,9 @@ void ZStream::loop()
             if((!isTelnet() || handleAsciiIAC((char *)&c,current))
             && (!isPETSCII() || ascToPet((char *)&c,current)))
               serial.printb(c);
+            // keep the UART busy while reading, not once per loop() pass
+            // (the CTS check above stops this within a byte)
+            serialOutDeque();
           }
         }
       }

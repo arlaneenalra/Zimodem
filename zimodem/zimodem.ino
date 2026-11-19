@@ -452,6 +452,7 @@ static void changeBaudRate(int baudRate)
   HWSerial.updateBaudRate(baudRate);
 #else
   HWSerial.begin(baudRate, serialConfig);  //Change baud rate
+  serialHwFlowApply(); // begin() cleared the UART's flow control bits
 #endif
 #if SUPPORT_LED_PINS
   s_pinWrite(DEFAULT_PIN_HS,(baudRate>=DEFAULT_HS_BAUD)?DEFAULT_HS_ACTIVE:DEFAULT_HS_INACTIVE);
@@ -471,6 +472,7 @@ static void changeSerialConfig(SerialConfig conf)
 # else
     HWSerial.begin(baudRate, conf);  //Change baud rate
 # endif
+  serialHwFlowApply(); // begin() cleared the UART's flow control bits
   debugPrintf("Config changed.\r\n");
 }
 

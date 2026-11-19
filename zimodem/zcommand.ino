@@ -194,6 +194,7 @@ void ZCommand::setConfigDefaults()
   s_pinWrite(pinDCD,dcdStatus);
   s_pinWrite(pinDSR,dsrActive);
   s_pinWrite(pinRI,riInactive);
+  serial.setFlowControlType(serial.getFlowControlType()); // the pins above may be the UART's (ESP8266 13/15)
   suppressResponses=false;
   numericResponses=false;
   longResponses=true;
@@ -522,6 +523,9 @@ void ZCommand::setOptionsFromSavedConfig(String configArguments[])
       pinMode(pinDSR,OUTPUT);
   }
   s_pinWrite(pinDSR,dsrActive);
+  // after every pin: on the ESP8266, CTS 13 / RTS 15 are the UART's own
+  // (serout.ino serialHwFlowApply), and the pinMode calls above took them
+  serial.setFlowControlType(serial.getFlowControlType());
   if(configArguments[CFG_S0_RINGS].length()>0)
     ringCounter = atoi(configArguments[CFG_S0_RINGS].c_str());
   if(configArguments[CFG_S41_STREAM].length()>0)
