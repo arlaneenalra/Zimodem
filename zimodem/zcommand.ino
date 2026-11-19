@@ -1525,7 +1525,7 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
 
   uint8_t buf[255];
   int bufSize = 254;
-  char firmwareName[100];
+  char firmwareName[300]; // the prefix and a version of up to 254 bytes (buf)
 #if USE_DEVUPDATER
   char *updaterHost = "192.168.1.10";
   int updaterPort = 8080;
@@ -1546,11 +1546,11 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
   char *updaterPrefix = "/otherprojs/c64net2";
 # endif
 #endif
-  sprintf(firmwareName,"%s-latest-version.txt",updaterPrefix);
+  snprintf(firmwareName,sizeof(firmwareName),"%s-latest-version.txt",updaterPrefix);
   if((!doWebGetBytes(updaterHost, updaterPort, firmwareName, false, buf, &bufSize))||(bufSize<=0))
     return ZERROR;
 
-  if((!isNumber)&&(vlen>2))
+  if((!isNumber)&&(vlen>2)&&(vlen<(int)sizeof(buf))) // AT&U=x: x must fit in buf
   {
     if(vbuf[0]=='=')
     {
@@ -1590,7 +1590,7 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
   
   serial.printf("Updating to %s, wait for modem restart...",buf);
   serial.flush();
-  sprintf(firmwareName,"%s-firmware-%s.bin", updaterPrefix, buf);
+  snprintf(firmwareName,sizeof(firmwareName),"%s-firmware-%s.bin", updaterPrefix, buf);
   uint32_t respLength=0;
   WiFiClient *c = doWebGetStream(updaterHost, updaterPort, firmwareName, false, &respLength);
   if(c==null)
@@ -1608,9 +1608,20 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
 
   serial.prints(".");
   serial.flush();
+  // writeStream() checks the image's magic byte with peek() before reading,
+  // which fails at once if no body bytes have arrived yet (servers such as
+  // python's http.server send the headers and the body separately).
+  unsigned long bodyWait = millis();
+  while((c->available()==0) && c->connected() && (millis()-bodyWait < 10000))
+  {
+    delay(10);
+    yield();
+  }
   int writeBytes = Update.writeStream(*c);
   if(writeBytes != respLength)
   {
+    serial.printf("%sUpdate error %d after %d of %u bytes.",EOLN.c_str(),(int)Update.getError(),writeBytes,respLength);
+    Update.end(); // bytes remain: resets the updater, keeps the old image
     c->stop();
     delete c;
     serial.prints(EOLN);
@@ -1620,6 +1631,7 @@ ZResult ZCommand::doUpdateFirmware(int vval, uint8_t *vbuf, int vlen, bool isNum
   serial.flush();
   if(!Update.end())
   {
+    serial.printf("%sUpdate error %d.",EOLN.c_str(),(int)Update.getError());
     c->stop();
     delete c;
     serial.prints(EOLN);
