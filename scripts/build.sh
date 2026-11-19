@@ -54,8 +54,11 @@ build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   "$SKETCH" 2>&1 | tee "$BUILD_DIR/compile.log"
 
 # The AT&U file stem, from the firmware's "/%s%s<stem>-latest-version.txt".
-update_stem="$(grep -a -o '%s%s[A-Za-z0-9_]*-latest-version\.txt' "$BUILD_DIR/$sketch_name.ino.bin" \
+# None when AT&U is compiled out (INCLUDE_OTH_UPDATES false, as in the
+# Frankless build).
+update_stem="$( (grep -a -o '%s%s[A-Za-z0-9_]*-latest-version\.txt' "$BUILD_DIR/$sketch_name.ino.bin" || true) \
   | head -1 | sed 's/^%s%s//; s/-latest-version\.txt$//')"
+update_stem="${update_stem:-none}"
 
 core_version="$("${CLI[@]}" core list --json \
   | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next((p["installed_version"] for p in d.get("platforms",[]) if p["id"]=="esp8266:esp8266"),"unknown"))')"

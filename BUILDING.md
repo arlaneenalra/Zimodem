@@ -35,6 +35,13 @@ The first boot formats SPIFFS (a pause), then shows `INITIALIZED` and
 
 ## Over-the-air updates (AT&U)
 
+**Off in the Frankless build** (`INCLUDE_FRANKLESS` on the ESP8266 turns
+`INCLUDE_OTH_UPDATES` off, so `AT&U` answers `ERROR`): no update site
+carries it, and Zimodem's own would install the stock firmware, without
+the Frankless's flow control. dvi-feather-terminal's releases carry the
+image (`modem/zimodem.bin`; its `scripts/build-zimodem.sh` builds it from
+this branch). The rest of this section applies to builds with AT&U on.
+
 Each build's version is `4.0.3-<BUILD_ID>` (ATI4, the banner), BUILD_ID
 being the UTC build time as digits unless set. `scripts/update-site.sh`
 builds and lays out an update site in `build/update-site` (`SITE_DIR=...`
@@ -55,10 +62,10 @@ On the modem (plain HTTP; the ESP8266 has too little RAM for HTTPS):
 
 | Command | |
 |---|---|
-| `AT&U?` | show the update site (Frankless default `http://claude-box.seg9.com:8000`) |
+| `AT&U?` | show the update site (default Zimodem's, `http://www.zimmers.net/otherprojs`) |
 | `AT&U"http://host:port/path"` | set it (then `AT&W` to keep it); `AT&U""` resets the default |
-| `AT&U` | compare with `<site>/frankless-latest-version.txt` |
-| `AT&U6502` | install `<site>/frankless-firmware-<latest>.bin` and restart |
+| `AT&U` | compare with `<site>/<stem>-latest-version.txt` (`build-info.txt`'s update_stem) |
+| `AT&U6502` | install `<site>/<stem>-firmware-<latest>.bin` and restart |
 | `AT&U=4.0.3-<id>` | install that version (roll back) |
 
 `ATI12` (Frankless build) shows why the modem last restarted: the reset

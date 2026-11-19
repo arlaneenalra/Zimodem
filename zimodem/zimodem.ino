@@ -210,21 +210,25 @@ const char compile_date[] = __DATE__ " " __TIME__;
 # define echoEOLN(...) serial.prints(EOLN)
 #endif
 
+#if INCLUDE_FRANKLESS && defined(ZIMODEM_ESP8266)
+/* No AT&U in the Frankless build: it is on no update site (Zimodem's would
+ * install the stock firmware, without the Frankless's flow control).
+ * dvi-feather-terminal's releases carry the image (modem/zimodem.bin). */
+# undef INCLUDE_OTH_UPDATES
+# define INCLUDE_OTH_UPDATES false
+#endif
+
 #if INCLUDE_OTH_UPDATES
 /* AT&U update site: a base URL (set with AT&U"url", saved with AT&W) holding
  * UPDATE_FILE_STEM-latest-version.txt and UPDATE_FILE_STEM-firmware-<version>.bin
  * (scripts/update-site.sh writes them). */
 # if USE_DEVUPDATER
 #  define DEFAULT_UPDATE_URL "http://192.168.1.10:8080/otherprojs"
-# elif INCLUDE_FRANKLESS && defined(ZIMODEM_ESP8266)
-#  define DEFAULT_UPDATE_URL "http://claude-box.seg9.com:8000"
 # else
 #  define DEFAULT_UPDATE_URL "http://www.zimmers.net/otherprojs"
 # endif
 # if INCLUDE_CMDRX16
 #  define UPDATE_FILE_STEM "x16"
-# elif INCLUDE_FRANKLESS && defined(ZIMODEM_ESP8266)
-#  define UPDATE_FILE_STEM "frankless"
 # elif defined(ZIMODEM_ESP32)
 #  define UPDATE_FILE_STEM "guru2"
 # else
