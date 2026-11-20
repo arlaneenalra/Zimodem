@@ -78,7 +78,10 @@ enum ConfigOptions
   CFG_S62_TELNET=38,
   CFG_S63_HANGUP=39,
   CFG_ALTOPMODE=40,
-  CFG_LAST=40
+  CFG_WIFISLEEP=41, // S64; these three last, so older config files still load
+  CFG_WIFIJOIN=42, // S65
+  CFG_RECONNECT=43, // S66
+  CFG_LAST=43
 };
 
 const ConfigOptions v2HexCfgs[] = {

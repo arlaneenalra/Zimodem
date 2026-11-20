@@ -194,6 +194,9 @@ const char compile_date[] = __DATE__ " " __TIME__;
 #define INTERNAL_FLOW_CONTROL_DIV 380
 #define DEFAULT_RECONNECT_DELAY 60000
 #define MAX_RECONNECT_DELAY 1800000
+#define DEFAULT_WIFI_JOIN_SECS 10 // S65
+#define MAX_WIFI_JOIN_SECS 120
+#define MAX_RECONNECT_SECS 3600 // S66
 
 class ZMode
 {
@@ -293,6 +296,9 @@ static IPAddress *staticGW = null;
 static IPAddress *staticSN = null;
 static unsigned long lastConnectAttempt = 0;
 static unsigned long nextReconnectDelay = 0; // zero means don't attempt reconnects
+static int wifiSleepMode = 0; // S64: 0 the SDK's power save (modem sleep), 1 the radio always awake
+static int wifiJoinSecs = DEFAULT_WIFI_JOIN_SECS; // S65: how long connectWifi waits for the network
+static int wifiReconnectSecs = 0; // S66: 0 retry after 60 s, doubling up to 30 min; n retry every n s
 static SerialConfig serialConfig = DEFAULT_SERIAL_CONFIG;
 static int baudRate=DEFAULT_BAUD_RATE;
 static int dequeSize=1+(DEFAULT_BAUD_RATE/INTERNAL_FLOW_CONTROL_DIV);
@@ -371,6 +377,24 @@ static void setNewStaticIPs(IPAddress *ip, IPAddress *dns, IPAddress *gateWay, I
   staticSN = subNet;
 }
 
+// The first delay before a reconnect attempt (S66).
+static unsigned long firstReconnectDelay()
+{
+  return (wifiReconnectSecs > 0) ? (unsigned long)wifiReconnectSecs * 1000UL : DEFAULT_RECONNECT_DELAY;
+}
+
+// S64: power save. In modem sleep the radio dozes between the AP's beacons,
+// and a packet it misses waits out a TCP retransmission: 1-3 s stalls in an
+// interactive session. A mains-powered modem can stay awake.
+static void applyWifiSleep()
+{
+#ifdef ZIMODEM_ESP32
+  WiFi.setSleep(wifiSleepMode == 0);
+#else
+  WiFi.setSleepMode((wifiSleepMode == 1) ? WIFI_NONE_SLEEP : WIFI_MODEM_SLEEP);
+#endif
+}
+
 static bool connectWifi(const char* ssid, const char* password, IPAddress *ip, IPAddress *dns, IPAddress *gateWay, IPAddress *subNet)
 {
   while(WiFi.status() == WL_CONNECTED)
@@ -384,6 +408,7 @@ static bool connectWifi(const char* ssid, const char* password, IPAddress *ip, I
     setHostName(hostname.c_str());
 #endif
   WiFi.mode(WIFI_STA);
+  applyWifiSleep();
   if((ip != null)&&(gateWay != null)&&(dns != null)&&(subNet!=null))
   {
     if(!WiFi.config(*ip,*gateWay,*subNet,*dns))
@@ -397,7 +422,7 @@ static bool connectWifi(const char* ssid, const char* password, IPAddress *ip, I
     setHostName(hostname.c_str());
   bool amConnected = (WiFi.status() == WL_CONNECTED) && (strcmp(WiFi.localIP().toString().c_str(), "0.0.0.0")!=0);
   int WiFiCounter = 0;
-  while ((!amConnected) && (WiFiCounter < 20))
+  while ((!amConnected) && (WiFiCounter < wifiJoinSecs * 2))
   {
     WiFiCounter++;
     if(!amConnected)
@@ -414,7 +439,7 @@ static bool connectWifi(const char* ssid, const char* password, IPAddress *ip, I
     WiFi.disconnect();
   }
   else
-    nextReconnectDelay = DEFAULT_RECONNECT_DELAY; // if connected, we always want to try reconns in the future
+    nextReconnectDelay = firstReconnectDelay(); // if connected, we always want to try reconns in the future
 
 #if SUPPORT_LED_PINS
   s_pinWrite(DEFAULT_PIN_WIFI,(WiFi.status() == WL_CONNECTED)?DEFAULT_WIFI_ACTIVE:DEFAULT_WIFI_INACTIVE);
@@ -557,6 +582,14 @@ static bool checkPlusPlusPlusEscape()
 
 void setup() 
 {
+#ifndef ZIMODEM_ESP32
+  // The network's name and password are Zimodem's own (AT&W) and passed to
+  // every WiFi.begin(). In its default persistent mode the SDK also writes
+  // them to its own flash sector on every begin() and disconnect(), and a
+  // reset or brownout during that write can leave a network it can no
+  // longer join. Before anything here touches WiFi (loadConfig disconnects).
+  WiFi.persistent(false);
+#endif
   for(int i=0;i<MAX_PIN_NO;i++)
     pinSupport[i]=false;
 #ifdef ZIMODEM_ESP32
@@ -631,6 +664,17 @@ void setup()
 
 void checkReconnect()
 {
+#ifndef ZIMODEM_ESP32
+  // S64=1: after a (re)association the SDK can be back in modem sleep, so
+  // check once a second while connected.
+  static unsigned long nextSleepCheck = 0;
+  if((wifiSleepMode == 1) && ((long)(millis() - nextSleepCheck) >= 0))
+  {
+    nextSleepCheck = millis() + 1000;
+    if((WiFi.status() == WL_CONNECTED) && (WiFi.getSleepMode() != WIFI_NONE_SLEEP))
+      WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  }
+#endif
   if((WiFi.status() != WL_CONNECTED)
   &&(nextReconnectDelay>0)
   &&(lastConnectAttempt>0)
@@ -645,9 +689,14 @@ void checkReconnect()
         unsigned long oldReconnectDelay = nextReconnectDelay;
         if(!connectWifi(wifiSSI.c_str(),wifiPW.c_str(),staticIP,staticDNS,staticGW,staticSN))
           debugPrintf("Unable to reconnect to %s.\r\n",wifiSSI.c_str());
-        nextReconnectDelay = oldReconnectDelay * 2;
-        if(nextReconnectDelay > MAX_RECONNECT_DELAY)
-          nextReconnectDelay = DEFAULT_RECONNECT_DELAY;
+        if(wifiReconnectSecs > 0)
+          nextReconnectDelay = firstReconnectDelay(); // S66: every n seconds
+        else
+        {
+          nextReconnectDelay = oldReconnectDelay * 2;
+          if(nextReconnectDelay > MAX_RECONNECT_DELAY)
+            nextReconnectDelay = DEFAULT_RECONNECT_DELAY;
+        }
      }
   }
 }

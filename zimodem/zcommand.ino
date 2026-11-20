@@ -215,6 +215,13 @@ void ZCommand::setConfigDefaults()
   machineState = stateMachine;
   termType = DEFAULT_TERMTYPE;
   busyMsg = DEFAULT_BUSYMSG;
+  if(wifiSleepMode != 0)
+  {
+    wifiSleepMode = 0;
+    applyWifiSleep();
+  }
+  wifiJoinSecs = DEFAULT_WIFI_JOIN_SECS;
+  wifiReconnectSecs = 0;
 #if SUPPORT_LED_PINS
   if(pinSupport[DEFAULT_PIN_AA])
   {
@@ -404,7 +411,8 @@ bool ZCommand::reSaveConfig(int retries)
   f.printf("%s,%s,%s,",zclockFormathex.c_str(),zclockHosthex.c_str(),hostnamehex.c_str());
   f.printf("%d,%s,%s,",printMode.getTimeoutDelayMs(),printSpechex.c_str(),termTypehex.c_str());
   f.printf("%s,%s,%s,%s,",staticIPstr.c_str(),staticDNSstr.c_str(),staticGWstr.c_str(),staticSNstr.c_str());
-  f.printf("%s,%d,%d,%d",busyMsghex.c_str(),telnetSupport,streamMode.getHangupType(),altOpMode);
+  f.printf("%s,%d,%d,%d,",busyMsghex.c_str(),telnetSupport,streamMode.getHangupType(),altOpMode);
+  f.printf("%d,%d,%d",wifiSleepMode,wifiJoinSecs,wifiReconnectSecs);
   f.close();
   delay(500);
   if(SPIFFS.exists(CONFIG_FILE))
@@ -565,6 +573,23 @@ void ZCommand::setOptionsFromSavedConfig(String configArguments[])
     altOpMode = (OpModes)atoi(configArguments[CFG_ALTOPMODE].c_str());
     setAltOpModeAdjustments();
   }
+  if(configArguments[CFG_WIFISLEEP].length()>0)
+  {
+    wifiSleepMode = (atoi(configArguments[CFG_WIFISLEEP].c_str()) == 1) ? 1 : 0;
+    applyWifiSleep();
+  }
+  if(configArguments[CFG_WIFIJOIN].length()>0)
+  {
+    int n = atoi(configArguments[CFG_WIFIJOIN].c_str());
+    if((n >= 1) && (n <= MAX_WIFI_JOIN_SECS))
+      wifiJoinSecs = n;
+  }
+  if(configArguments[CFG_RECONNECT].length()>0)
+  {
+    int n = atoi(configArguments[CFG_RECONNECT].c_str());
+    if((n >= 0) && (n <= MAX_RECONNECT_SECS))
+      wifiReconnectSecs = n;
+  }
   updateAutoAnswer();
 }
 
@@ -587,7 +612,7 @@ void ZCommand::parseConfigOptions(String configArguments[])
     {
       if(str[i]==',')
       {
-        if(argn<=CFG_LAST)
+        if(argn<CFG_LAST) // a newer firmware's extra fields: not past the array
           argn++;
         else
           break;
@@ -635,7 +660,7 @@ void ZCommand::loadConfig()
   {
     debugPrintf("Connecting to %s\r\n",wifiSSI.c_str());
     connectWifi(wifiSSI.c_str(),wifiPW.c_str(),staticIP,staticDNS,staticGW,staticSN);
-    nextReconnectDelay = DEFAULT_RECONNECT_DELAY;
+    nextReconnectDelay = firstReconnectDelay();
   }
   debugPrintf("Resetting...\r\n");
   doResetCommand(true);
@@ -2186,6 +2211,12 @@ int ZCommand::getStatusRegister(const int snum, int crc8)
      case HANGUP_DTR: return 2;
      case HANGUP_PDP: return 3;
    }
+ case 64:
+   return wifiSleepMode;
+ case 65:
+   return wifiJoinSecs;
+ case 66:
+   return wifiReconnectSecs;
  default:
     break;
   }
@@ -2409,6 +2440,36 @@ ZResult ZCommand::setStatusRegister(const int snum, const int sval, int *crc8, c
    else
    if(sval == 3)
      streamMode.setHangupType(HANGUP_PDP);
+   break;
+ case 64:
+   if((sval == 0) || (sval == 1))
+   {
+     wifiSleepMode = sval;
+     applyWifiSleep();
+     result=ZOK;
+   }
+   else
+     result=ZERROR;
+   break;
+ case 65:
+   if((sval >= 1) && (sval <= MAX_WIFI_JOIN_SECS))
+   {
+     wifiJoinSecs = sval;
+     result=ZOK;
+   }
+   else
+     result=ZERROR;
+   break;
+ case 66:
+   if((sval >= 0) && (sval <= MAX_RECONNECT_SECS))
+   {
+     wifiReconnectSecs = sval;
+     if(nextReconnectDelay > 0)
+       nextReconnectDelay = firstReconnectDelay();
+     result=ZOK;
+   }
+   else
+     result=ZERROR;
    break;
  default:
     break;
